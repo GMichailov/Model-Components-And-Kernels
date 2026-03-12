@@ -12,17 +12,17 @@ void check (cudaError_t err, char const* func, char const* file, int line) {
     }
 }
 
-// Issues: CUB load isn't as fast and potentially dangerous
+/*
 template<typename ACTIVATION_DATA_TYPE, typename WEIGHT_DATA_TYPE, int DIM_X, int BLOCK_SIZE>
-__global__ __forceinline__ void first_rmsnorm_kernel(
-    const ACTIVATION_DATA_TYPE* __restrict__ x, const WEIGHT_DATA_TYPE* __restrict__ gamma, ACTIVATION_DATA_TYPE* __restrict__ y, int seq_len, float epsilon) 
+__global__ __forceinline__ void rmsnorm_cub_kernel(
+    const ACTIVATION_DATA_TYPE* __restrict__ x, const WEIGHT_DATA_TYPE* __restrict__ gamma, ACTIVATION_DATA_TYPE* __restrict__ y, float epsilon) 
 {
     typedef cub::BlockReduce<float, BLOCK_SIZE> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     // Token index is blockIdx.x
     const ACTIVATION_DATA_TYPE* x_row = x + blockIdx.x * DIM_X;
     ACTIVATION_DATA_TYPE* y_row = y + blockIdx.x * DIM_X;
-    ACTIVATION_DATA_TYPE thread_sum = 0;
+    ACTIVATION_DATA_TYPE thread_sum = 0.0f;
     #pragma unroll
     for (int i{threadIdx.x}; i < DIM_X; i += blockDim.x) {
         ACTIVATION_DATA_TYPE v = x_row[i];
@@ -37,6 +37,7 @@ __global__ __forceinline__ void first_rmsnorm_kernel(
         y_row[i] = x_row[i] * inv_rms * gamma[i];
     }
 }
+*/
 
 __device__ __forceinline__ float warp_reduce_sum(float val) {
     #pragma unroll
@@ -58,23 +59,24 @@ __device__ __forceinline__ float block_reduce_sum(float val) {
     return val;
 }
 
-// Assumes ACT DTYPE >= WEIGHT DTYPE (Literally no reason to handle the opposite)
-// Currently assume DIM_X divisible by float 4.
-// Cons: Only handles one token per block, want to make this handle more than one per block.
-template<typename ACTIVATION_DATA_TYPE, typename WEIGHT_DATA_TYPE, int DIM_X, int BLOCK_SIZE>
-__global__ __forceinline__ void second_rmsnorm_kernel(
+// Assumes size ACT DTYPE >= WEIGHT DTYPE (Literally no reason to handle the opposite)
+// Currently enforces DIM_X divisible by VECTORIZED_LOAD_TYPE.
+template<typename ACTIVATION_DATA_TYPE, typename WEIGHT_DATA_TYPE, typename VECTORIZED_LOAD_TYPE, int DIM_X>
+__global__ __forceinline__ void noncub_rmsnorm_kernel_divisible(
     const ACTIVATION_DATA_TYPE* __restrict__ x, const WEIGHT_DATA_TYPE* __restrict__ gamma, ACTIVATION_DATA_TYPE* __restrict__ y, float epsilon) 
 {
-    constexpr int act_vec_loads = sizeof(float4) / sizeof(ACTIVATION_DATA_TYPE);
+    static_assert(DIM_X % VECTORIZED_LOAD_TYPE == 0, "Vectorized load datatype must be a divisor of dim_x.");
+    constexpr int act_vec_loads = sizeof(VECTORIZED_LOAD_TYPE) / sizeof(ACTIVATION_DATA_TYPE);
+    constexpr int num_loads = DIM_X / sizeof(VECTORIZED_LOAD_TYPE);
     ACTIVATION_DATA_TYPE x_vals[act_vec_loads];
     ACTIVATION_DATA_TYPE out[act_vec_loads];
     const ACTIVATION_DATA_TYPE* x_row = x + blockIdx.x * DIM_X;
     ACTIVATION_DATA_TYPE* y_row = y + blockIdx.x * DIM_X;
     float thread_sum = 0.0f;
-    const float4* x4 = reinterpret_cast<const float4*>(x_row);
+    const VECTORIZED_LOAD_TYPE* x_vec = reinterpret_cast<const VECTORIZED_LOAD_TYPE*>(x_row);
     #pragma unroll
-    for (int i{threadIdx.x}; i < DIM_X/act_vec_loads; i += BLOCK_SIZE) {
-        float4 v = x4[i];
+    for (int i{threadIdx.x}; i < num_loads; i += blockDim.x) {
+        VECTORIZED_LOAD_TYPE v = x_vec[i];
         memcpy(x_vals, &v, sizeof(v));
         #pragma unroll
         for (int j{0}; j < act_vec_loads; ++j) {
@@ -86,15 +88,61 @@ __global__ __forceinline__ void second_rmsnorm_kernel(
     __shared__ float inv_rms;
     if (threadIdx.x == 0) inv_rms = rsqrtf(sum / DIM_X + epsilon);
     __syncthreads();
-    float4* y4 = reinterpret_cast<float4*>(y_row);
-    for (int i{threadIdx.x}; i < DIM_X/act_vec_loads; i += BLOCK_SIZE) {
-        float4 x4v = x4[i];
-        memcpy(x_vals, &x4v, sizeof(x4v));
+    VECTORIZED_LOAD_TYPE* y_vec = reinterpret_cast<VECTORIZED_LOAD_TYPE*>(y_row);
+    for (int i{threadIdx.x}; i < num_loads; i += blockDim.x) {
+        VECTORIZED_LOAD_TYPE x_vec_val = x_vec[i];
+        memcpy(x_vals, &x_vec_val, sizeof(x_vec_val));
         #pragma unroll
         for (int j{0}; j < act_vec_loads; ++j) {
-            ACTIVATION_DATA_TYPE weight = ACTIVATION_DATA_TYPE([j + i * act_vec_loads]);
+            ACTIVATION_DATA_TYPE weight = ACTIVATION_DATA_TYPE(gamma[j + i * act_vec_loads]);
             out[j] = x_vals[j] * weight * inv_rms;
         }
-        memcpy(y4 + i, out, sizeof(float4));
+        memcpy(y_vec + i, out, sizeof(VECTORIZED_LOAD_TYPE));
     }
+}
+
+// Assumes size ACT DTYPE >= WEIGHT DTYPE (Literally no reason to handle the opposite)
+// Currently does NOT assume DIM_X divisible by VECTORIZED_LOAD_TYPE. (Can handle both scenarios though).
+template<typename ACTIVATION_DATA_TYPE, typename WEIGHT_DATA_TYPE, typename VECTORIZED_LOAD_TYPE, int DIM_X>
+__global__ __forceinline__ void noncub_rmsnorm_kernel_indivisible(
+    const ACTIVATION_DATA_TYPE* __restrict__ x, const WEIGHT_DATA_TYPE* __restrict__ gamma, ACTIVATION_DATA_TYPE* __restrict__ y, float epsilon) 
+{
+    constexpr int act_vec_loads = sizeof(VECTORIZED_LOAD_TYPE) / sizeof(ACTIVATION_DATA_TYPE);
+    constexpr int num_loads = DIM_X / act_vec_loads;
+    constexpr int tail = DIM_X % act_vec_loads;
+    int tail_idx = num_loads * act_vec_loads + threadIdx.x;
+    ACTIVATION_DATA_TYPE x_vals[act_vec_loads];
+    ACTIVATION_DATA_TYPE out[act_vec_loads];
+    const ACTIVATION_DATA_TYPE* x_row = x + blockIdx.x * DIM_X;
+    ACTIVATION_DATA_TYPE* y_row = y + blockIdx.x * DIM_X;
+    float thread_sum{0.0f};
+    const VECTORIZED_LOAD_TYPE* x_vec = reinterpret_cast<const VECTORIZED_LOAD_TYPE*>(x_row);
+    #pragma unroll
+    for (int i{threadIdx.x}; i < num_loads; i += blockDim.x) {
+        VECTORIZED_LOAD_TYPE v = x_vec[i];
+        memcpy(x_vals, &v, sizeof(v));
+        #pragma unroll
+        for (int j{0}; j < act_vec_loads; ++j) {
+            float val = float(x_vals[j]);
+            thread_sum += val * val;
+        }
+    }
+    if (threadIdx.x < tail) thread_sum += float(x_row[tail_idx]);
+    float sum = block_reduce_sum(thread_sum);
+    __shared__ float inv_rms;
+    if (threadIdx.x == 0) inv_rms = rsqrtf(sum / DIM_X + epsilon);
+    __syncthreads();
+    VECTORIZED_LOAD_TYPE* y_vec = reinterpret_cast<VECTORIZED_LOAD_TYPE*>(y_row);
+    for (int i{threadIdx.x}; i < num_loads; i += blockDim.x) {
+        VECTORIZED_LOAD_TYPE x_vec_val = x_vec[i];
+        memcpy(x_vals, &x_vec_val, sizeof(x_vec_val));
+        int gamma_idx = i * act_vec_loads;
+        #pragma unroll
+        for (int j{0}; j < act_vec_loads; ++j) {
+            ACTIVATION_DATA_TYPE weight = ACTIVATION_DATA_TYPE(gamma[j + gamma_idx]);
+            out[j] = x_vals[j] * weight * inv_rms;
+        }
+        memcpy(y_vec + i, out, sizeof(VECTORIZED_LOAD_TYPE));
+    }
+    if (threadIdx.x < tail) y_row[tail_idx] = x_row[tail_idx] * ACTIVATION_DATA_TYPE(gamma[tail_idx]) * inv_rms;
 }
