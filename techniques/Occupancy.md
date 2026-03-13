@@ -10,3 +10,5 @@ Actual registers per thread = ceil(20/8) * 8 = 24.
 Registers per warp = 32 threads per warp * 24 registers = 768 registers.
 Registers per block = 3072 registers.
 Max number of active blocks per SM = int(65536 / 3072) = 16.
+
+You can get the number of registers used per thread for each kernel using --ptxas-option=-v when compiling with nvvcc.
