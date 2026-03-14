@@ -47,4 +47,6 @@ use persistent behavior for as much of the window as possible.
 
 Also note to be careful about reserving L2 when using multiple streams.
 
+## Application in Deep Learning Kernel
 
+Potentially mainly useful in embedding lookup table for most highly used tokens, but overall, not super useful.
