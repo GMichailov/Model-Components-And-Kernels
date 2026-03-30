@@ -11,13 +11,13 @@ namespace kernels {
 
     // Currently enforces DIM_X divisible by VECTORIZED_LOAD_TYPE.
     template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_DTYPE, int DIM_X>
-    __global__ void rmsnorm_kernel_divisible(
+    __global__ void rmsnorm_kernel_divisible_forward(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon) 
     {
         static_assert((DIM_X * sizeof(ACTIVATION_DTYPE)) % sizeof(VECTORIZED_LOAD_TYPE) == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
         static_assert(sizeof(VECTORIZED_LOAD_TYPE) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
         static_assert(sizeof(VECTORIZED_LOAD_TYPE) >= sizeof(ACTIVATION_DTYPE), "Vectorized load type must be the same or larger than the activation type.");
-        static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation accumulation datatype must be a larger size than activation type.");
+        static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation datatype must be a larger or equal to in size to activation type.");
         constexpr int act_vec_loads = sizeof(VECTORIZED_LOAD_TYPE) / sizeof(ACTIVATION_DTYPE);
         constexpr int num_loads = DIM_X * sizeof(ACTIVATION_DTYPE) / sizeof(VECTORIZED_LOAD_TYPE);
         ACTIVATION_DTYPE x_vals[act_vec_loads];
@@ -55,7 +55,7 @@ namespace kernels {
 
     // Currently allows DIM_X to be indivisible by VECTORIZED_LOAD_TYPE.
     template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_DTYPE, int DIM_X>
-    __global__ void rmsnorm_kernel_indivisible(
+    __global__ void rmsnorm_kernel_indivisible_forward(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon) 
     {
         static_assert(sizeof(VECTORIZED_LOAD_TYPE) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
@@ -107,7 +107,7 @@ namespace launchers {
     namespace offline {
 
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_TYPE, int DIM_X>
-        torch::Tensor cuda_rmsnorm_divisble_launcher_offline(const torch::Tensor &x, const torch::Tensor &gamma, float epsilon, int num_threads) {
+        torch::Tensor cuda_rmsnorm_divisble_forward_launcher_offline(const torch::Tensor &x, const torch::Tensor &gamma, float epsilon, int num_threads) {
             torch::Tensor y = torch::empty_like(x);
             dim3 grid(x.numel() / DIM_X);
             dim3 block(num_threads);
@@ -116,7 +116,7 @@ namespace launchers {
         }
 
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_TYPE, int DIM_X>
-        torch::Tensor cuda_rmsnorm_indivisble_launcher_offline(const torch::Tensor &x, const torch::Tensor &gamma, float epsilon, int num_threads) {
+        torch::Tensor cuda_rmsnorm_indivisble_forward_launcher_offline(const torch::Tensor &x, const torch::Tensor &gamma, float epsilon, int num_threads) {
             torch::Tensor y = torch::empty_like(x);
             dim3 grid(x.numel() / DIM_X);
             dim3 block(num_threads);
