@@ -36,25 +36,27 @@ namespace kernels {
     // Still not clear if even worth unpacking or simply avoiding.
 
     // Currently enforces DIM_X divisible by VECTORIZED_LOAD_TYPE.
-    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_DTYPE, int DIM_X>
+    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X>
     __global__ void rmsnorm_kernel_divisible_forward(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon)
     {
-        static_assert((DIM_X * sizeof(ACTIVATION_DTYPE)) % sizeof(VECTORIZED_LOAD_TYPE) == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
-        static_assert(sizeof(VECTORIZED_LOAD_TYPE) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
-        static_assert(sizeof(VECTORIZED_LOAD_TYPE) >= sizeof(ACTIVATION_DTYPE), "Vectorized load type must be the same or larger than the activation type.");
+        using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
+        static_assert(sizeof(vec_t) <= 16, "Max vectorized load size must be less than or equal to 128 bytes.");
+        static_assert((DIM_X * sizeof(ACTIVATION_DTYPE)) % sizeof(vec_t) == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
+        static_assert(sizeof(vec_t) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
+        static_assert(sizeof(vec_t) >= sizeof(ACTIVATION_DTYPE), "Vectorized load type must be the same or larger than the activation type.");
         static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation datatype must be a larger or equal to in size to activation type.");
-        constexpr int act_vec_loads = sizeof(VECTORIZED_LOAD_TYPE) / sizeof(ACTIVATION_DTYPE);
-        constexpr int num_loads = DIM_X * sizeof(ACTIVATION_DTYPE) / sizeof(VECTORIZED_LOAD_TYPE);
+        constexpr int act_vec_loads = sizeof(vec_t) / sizeof(ACTIVATION_DTYPE);
+        constexpr int num_loads = DIM_X * sizeof(ACTIVATION_DTYPE) / sizeof(vec_t);
         ACTIVATION_DTYPE x_vals[act_vec_loads];
         ACTIVATION_DTYPE out[act_vec_loads];
         const ACTIVATION_DTYPE* x_row = x + blockIdx.x * DIM_X;
         ACTIVATION_DTYPE* y_row = y + blockIdx.x * DIM_X;
         CALCULATION_DTYPE thread_sum{0};
-        const VECTORIZED_LOAD_TYPE* x_vec = reinterpret_cast<const VECTORIZED_LOAD_TYPE*>(x_row);
+        const vec_t* x_vec = reinterpret_cast<const vec_t*>(x_row);
         #pragma unroll
         for (uint i{threadIdx.x}; i < num_loads; i += blockDim.x) {
-            VECTORIZED_LOAD_TYPE v = x_vec[i];
+            vec_t v = x_vec[i];
             memcpy(x_vals, &v, sizeof(v));
             #pragma unroll
             for (int j{0}; j < act_vec_loads; ++j) {
@@ -66,19 +68,22 @@ namespace kernels {
         __shared__ CALCULATION_DTYPE inv_rms;
         if (threadIdx.x == 0) inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
         __syncthreads();
-        VECTORIZED_LOAD_TYPE* y_vec = reinterpret_cast<VECTORIZED_LOAD_TYPE*>(y_row);
+        vec_t* y_vec = reinterpret_cast<vec_t*>(y_row);
         for (uint i{threadIdx.x}; i < num_loads; i += blockDim.x) {
-            VECTORIZED_LOAD_TYPE x_vec_val = x_vec[i];
+            vec_t x_vec_val = x_vec[i];
             memcpy(x_vals, &x_vec_val, sizeof(x_vec_val));
             #pragma unroll
             for (int j{0}; j < act_vec_loads; ++j) {
                 CALCULATION_DTYPE weight = static_cast<CALCULATION_DTYPE>(gamma[j + i * act_vec_loads]);
                 out[j] = static_cast<ACTIVATION_DTYPE>(static_cast<CALCULATION_DTYPE>(x_vals[j]) * weight * inv_rms);
             }
-            memcpy(y_vec + i, out, sizeof(VECTORIZED_LOAD_TYPE));
+            vec_t out_vec;
+            memcpy(&out_vec, out, sizeof(out_vec));
+            y_vec[i] = out_vec;
         }
     }
 
+    /*
     // Currently allows DIM_X to be indivisible by VECTORIZED_LOAD_TYPE.
     template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_DTYPE, int DIM_X>
     __global__ void rmsnorm_kernel_indivisible_forward(
@@ -125,37 +130,44 @@ namespace kernels {
         }
         if (threadIdx.x < tail) { y_row[tail_idx] = static_cast<ACTIVATION_DTYPE>(static_cast<CALCULATION_DTYPE>(x_row[tail_idx]) * static_cast<CALCULATION_DTYPE>(gamma[tail_idx]) * inv_rms); }
     }
-
+    */
 }
 
 namespace launchers {
 
     namespace offline {
 
-        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_TYPE, int DIM_X>
-        at::Tensor cuda_rmsnorm_divisble_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_TYPE, int VECTORIZED_LOAD_COUNT, int DIM_X>
+        at::Tensor cuda_rmsnorm_divisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+            using vec_t = kernels::aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
             TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
             TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
             TORCH_CHECK(gamma.numel() == DIM_X, "Expected gamma len ", DIM_X, " but got ", gamma.numel());
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(x.data_ptr<ACTIVATION_DTYPE>()) % alignof(vec_t) == 0, "x is not properly aligned for vectorized access");
             at::Tensor y = at::empty_like(x);
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(y.data_ptr<ACTIVATION_DTYPE>()) % alignof(vec_t) == 0, "y is not properly aligned for vectorized access");
             dim3 grid(x.numel() / DIM_X);
             dim3 block(num_threads);
-            kernels::rmsnorm_kernel_divisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, VECTORIZED_LOAD_TYPE, CALCULATION_TYPE, DIM_X><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
+            kernels::rmsnorm_kernel_divisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, CALCULATION_TYPE, VECTORIZED_LOAD_COUNT, DIM_X><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
             return y;
         }
 
-        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_TYPE, int DIM_X>
-        at::Tensor cuda_rmsnorm_indivisble_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+        /*
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X>
+        at::Tensor cuda_rmsnorm_indivisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+            using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
             TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
             TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
             TORCH_CHECK(gamma.numel() == DIM_X, "Expected gamma len ", DIM_X, " but got ", gamma.numel());
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(x.data_ptr<ACTIVATION_DTYPE>()) % alignof(vec_t) == 0, "x is not properly aligned for vectorized access");
             at::Tensor y = at::empty_like(x);
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(y.data_ptr<ACTIVATION_DTYPE>()) % alignof(vec_t) == 0, "y is not properly aligned for vectorized access");
             dim3 grid(x.numel() / DIM_X);
             dim3 block(num_threads);
-            kernels::rmsnorm_kernel_indivisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, VECTORIZED_LOAD_TYPE, CALCULATION_TYPE, DIM_X><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
+            kernels::rmsnorm_kernel_indivisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, vec_t, CALCULATION_DTYPE, DIM_X><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
             return y;
         }
-
+        */
     }
 
     namespace online {
@@ -169,81 +181,35 @@ namespace launchers {
 }
 
 // ---------- TEMPLATE INSTANTIATIONS ----------
-#define FOR_EACH_DIM(MACRO) \
-    MACRO(128) /*\
-    MACRO(256) \
-    MACRO(384) \
-    MACRO(512) \
-    MACRO(768) \
-    MACRO(1024) \
-    MACRO(1536) \
-    MACRO(2048) \
-    MACRO(5120) \
-    MACRO(10240) */
+// DIM_X = 128, CALCULATION_DTYPE = float
+// ACT >= WGT size: (float,float), (Half,Half), (Half,float), (BFloat16,BFloat16), (BFloat16,float)
+// Vec load counts: float=1,2,4 | Half/BFloat16=1,2,4,8
 
-#define INSTANTIATE(ACT, WGT, VEC, CALC, DIM) \
-    template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisble_forward_launcher_offline<ACT, WGT, VEC, CALC, DIM>(const at::Tensor&, const at::Tensor&, float, int);
+// fp32, fp32 - vec counts 1, 2, 4
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
 
-// Use ATen datatypes for the templates.
-// fp32, fp32, float4
-#define INSTANTIATE_FP32_FP32_F4(DIM) INSTANTIATE(float, float, float4, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP32_FP32_F4)
+// fp16, fp16 - vec counts 1, 2, 4, 8
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
 
-// fp32, fp32, float2
-#define INSTANTIATE_FP32_FP32_F2(DIM) INSTANTIATE(float, float, float2, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP32_FP32_F2)
+// fp16, fp32 - vec counts 1, 2, 4, 8
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
 
-// fp32, fp32, float
-#define INSTANTIATE_FP32_FP32_F(DIM) INSTANTIATE(float, float, float, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP32_FP32_F)
+// bf16, bf16 - vec counts 1, 2, 4, 8
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
 
-// fp16, fp16, float4
-#define INSTANTIATE_FP16_FP16_F4(DIM) INSTANTIATE(at::Half, at::Half, float4, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP16_FP16_F4)
-
-// fp16, fp16, float2
-#define INSTANTIATE_FP16_FP16_F2(DIM) INSTANTIATE(at::Half, at::Half, float2, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP16_FP16_F2)
-
-// fp16, fp16, float
-#define INSTANTIATE_FP16_FP16_F(DIM) INSTANTIATE(at::Half, at::Half, float, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP16_FP16_F)
-
-// fp16, fp32, float4
-#define INSTANTIATE_FP16_FP32_F4(DIM) INSTANTIATE(at::Half, float, float4, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP16_FP32_F4)
-
-// fp16, fp32, float2
-#define INSTANTIATE_FP16_FP32_F2(DIM) INSTANTIATE(at::Half, float, float2, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP16_FP32_F2)
-
-// fp16, fp32, float
-#define INSTANTIATE_FP16_FP32_F(DIM) INSTANTIATE(at::Half, float, float, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_FP16_FP32_F)
-
-// bf16, bf16, float4
-#define INSTANTIATE_BF16_BF16_F4(DIM) INSTANTIATE(at::BFloat16, at::BFloat16, float4, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_BF16_BF16_F4)
-
-// bf16, bf16, float2
-#define INSTANTIATE_BF16_BF16_F2(DIM) INSTANTIATE(at::BFloat16, at::BFloat16, float2, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_BF16_BF16_F2)
-
-// bf16, bf16, float
-#define INSTANTIATE_BF16_BF16_F(DIM) INSTANTIATE(at::BFloat16, at::BFloat16, float, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_BF16_BF16_F)
-
-// bf16, fp32, float4
-#define INSTANTIATE_BF16_FP32_F4(DIM) INSTANTIATE(at::BFloat16, float, float4, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_BF16_FP32_F4)
-
-// bf16, fp32, float2
-#define INSTANTIATE_BF16_FP32_F2(DIM) INSTANTIATE(at::BFloat16, float, float2, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_BF16_FP32_F2)
-
-// bf16, fp32, float
-#define INSTANTIATE_BF16_FP32_F(DIM) INSTANTIATE(at::BFloat16, float, float, float, DIM)
-FOR_EACH_DIM(INSTANTIATE_BF16_FP32_F)
-
-#undef INSTANTIATE
-#undef FOR_EACH_DIM
+// bf16, fp32 - vec counts 1, 2, 4, 8
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
