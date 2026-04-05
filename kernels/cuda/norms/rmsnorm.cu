@@ -32,15 +32,13 @@ namespace kernels {
     template<typename scalar_t, int vec_size>
     struct alignas(sizeof(scalar_t) * vec_size) aligned_vector{ scalar_t val[vec_size]; };
 
-    // NOTE: The datatypes that stuff 2 of the same (ie half2 and __nv_bfloat162) are not being unpacked correctly.
-    // Still not clear if even worth unpacking or simply avoiding.
-
     // Currently enforces DIM_X divisible by VECTORIZED_LOAD_TYPE.
-    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X>
+    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
     __global__ void rmsnorm_kernel_divisible_forward(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon)
     {
         using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
+        static_assert(THREADS_PER_BLOCK <= 1024, "Max threads per block is 1024.");
         static_assert(sizeof(vec_t) <= 16, "Max vectorized load size must be less than or equal to 128 bytes.");
         static_assert((DIM_X * sizeof(ACTIVATION_DTYPE)) % sizeof(vec_t) == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
         static_assert(sizeof(vec_t) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
@@ -55,7 +53,7 @@ namespace kernels {
         CALCULATION_DTYPE thread_sum{0};
         const vec_t* x_vec = reinterpret_cast<const vec_t*>(x_row);
         #pragma unroll
-        for (uint i{threadIdx.x}; i < num_loads; i += blockDim.x) {
+        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
             vec_t v = x_vec[i];
             memcpy(x_vals, &v, sizeof(v));
             #pragma unroll
@@ -69,7 +67,7 @@ namespace kernels {
         if (threadIdx.x == 0) inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
         __syncthreads();
         vec_t* y_vec = reinterpret_cast<vec_t*>(y_row);
-        for (uint i{threadIdx.x}; i < num_loads; i += blockDim.x) {
+        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
             vec_t x_vec_val = x_vec[i];
             memcpy(x_vals, &x_vec_val, sizeof(x_vec_val));
             #pragma unroll
@@ -137,8 +135,8 @@ namespace launchers {
 
     namespace offline {
 
-        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_TYPE, int VECTORIZED_LOAD_COUNT, int DIM_X>
-        at::Tensor cuda_rmsnorm_divisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_TYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
+        at::Tensor cuda_rmsnorm_divisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon) {
             using vec_t = kernels::aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
             TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
             TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
@@ -147,8 +145,8 @@ namespace launchers {
             at::Tensor y = at::empty_like(x);
             TORCH_CHECK(reinterpret_cast<uintptr_t>(y.data_ptr<ACTIVATION_DTYPE>()) % alignof(vec_t) == 0, "y is not properly aligned for vectorized access");
             dim3 grid(x.numel() / DIM_X);
-            dim3 block(num_threads);
-            kernels::rmsnorm_kernel_divisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, CALCULATION_TYPE, VECTORIZED_LOAD_COUNT, DIM_X><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
+            dim3 block(THREADS_PER_BLOCK);
+            kernels::rmsnorm_kernel_divisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, CALCULATION_TYPE, VECTORIZED_LOAD_COUNT, DIM_X, THREADS_PER_BLOCK><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
             return y;
         }
 
@@ -186,30 +184,30 @@ namespace launchers {
 // Vec load counts: float=1,2,4 | Half/BFloat16=1,2,4,8
 
 // fp32, fp32 - vec counts 1, 2, 4
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 1, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 2, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<float, float, float, 4, 128, 256>(const at::Tensor&, const at::Tensor&, float);
 
 // fp16, fp16 - vec counts 1, 2, 4, 8
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 1, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 2, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 4, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, at::Half, float, 8, 128, 256>(const at::Tensor&, const at::Tensor&, float);
 
 // fp16, fp32 - vec counts 1, 2, 4, 8
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 1, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 2, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 4, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::Half, float, float, 8, 128, 256>(const at::Tensor&, const at::Tensor&, float);
 
 // bf16, bf16 - vec counts 1, 2, 4, 8
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 128, 256>(const at::Tensor&, const at::Tensor&, float);
 
 // bf16, fp32 - vec counts 1, 2, 4, 8
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 1, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 2, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 4, 128>(const at::Tensor&, const at::Tensor&, float, int);
-template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 8, 128>(const at::Tensor&, const at::Tensor&, float, int);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 1, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 2, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 4, 128, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, float, float, 8, 128, 256>(const at::Tensor&, const at::Tensor&, float);

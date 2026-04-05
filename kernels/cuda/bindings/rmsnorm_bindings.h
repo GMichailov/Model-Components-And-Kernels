@@ -7,7 +7,7 @@
 // -------------------------------------
 
 #define RMSNORM_DIM_CASES(ACT, WGT, VEC, CALC)                                              \
-    case 128:   return norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<ACT, WGT, CALC, VEC, 128>(x, gamma, epsilon, num_threads);   \
+    case 128:   return norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<ACT, WGT, CALC, VEC, 128, 256>(x, gamma, epsilon);   \
     /*case 256:   return norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<ACT, WGT, CALC, VEC, 256>(x, gamma, epsilon, num_threads);   \
     case 384:   return norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<ACT, WGT, CALC, VEC, 384>(x, gamma, epsilon, num_threads);   \
     case 512:   return norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<ACT, WGT, CALC, VEC, 512>(x, gamma, epsilon, num_threads);   \
@@ -28,8 +28,7 @@
 at::Tensor FN_NAME(                                                      \
     const at::Tensor& x,                                                 \
     const at::Tensor& gamma,                                             \
-    float epsilon,                                                          \
-    int num_threads                                                         \
+    float epsilon                                                         \
 ) {                                                                         \
     const int dim = static_cast<int>(x.size(-1));                           \
     switch (dim) {                                                          \
@@ -82,33 +81,33 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     using namespace pybind11::literals;
 
     // fp32, fp32
-    m.def("rmsnorm_fp32_fp32_v1", &rmsnorm_fp32_fp32_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp32_fp32_v2", &rmsnorm_fp32_fp32_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp32_fp32_v4", &rmsnorm_fp32_fp32_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
+    m.def("rmsnorm_fp32_fp32_v1", &rmsnorm_fp32_fp32_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp32_fp32_v2", &rmsnorm_fp32_fp32_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp32_fp32_v4", &rmsnorm_fp32_fp32_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
 
     // fp16, fp16
-    m.def("rmsnorm_fp16_fp16_v1", &rmsnorm_fp16_fp16_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp16_fp16_v2", &rmsnorm_fp16_fp16_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp16_fp16_v4", &rmsnorm_fp16_fp16_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp16_fp16_v8", &rmsnorm_fp16_fp16_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
+    m.def("rmsnorm_fp16_fp16_v1", &rmsnorm_fp16_fp16_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp16_fp16_v2", &rmsnorm_fp16_fp16_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp16_fp16_v4", &rmsnorm_fp16_fp16_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp16_fp16_v8", &rmsnorm_fp16_fp16_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
 
     // fp16, fp32
-    m.def("rmsnorm_fp16_fp32_v1", &rmsnorm_fp16_fp32_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp16_fp32_v2", &rmsnorm_fp16_fp32_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp16_fp32_v4", &rmsnorm_fp16_fp32_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_fp16_fp32_v8", &rmsnorm_fp16_fp32_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
+    m.def("rmsnorm_fp16_fp32_v1", &rmsnorm_fp16_fp32_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp16_fp32_v2", &rmsnorm_fp16_fp32_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp16_fp32_v4", &rmsnorm_fp16_fp32_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_fp16_fp32_v8", &rmsnorm_fp16_fp32_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
 
     // bf16, bf16
-    m.def("rmsnorm_bf16_bf16_v1", &rmsnorm_bf16_bf16_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_bf16_bf16_v2", &rmsnorm_bf16_bf16_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_bf16_bf16_v4", &rmsnorm_bf16_bf16_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_bf16_bf16_v8", &rmsnorm_bf16_bf16_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
+    m.def("rmsnorm_bf16_bf16_v1", &rmsnorm_bf16_bf16_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_bf16_bf16_v2", &rmsnorm_bf16_bf16_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_bf16_bf16_v4", &rmsnorm_bf16_bf16_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_bf16_bf16_v8", &rmsnorm_bf16_bf16_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
 
     // bf16, fp32
-    m.def("rmsnorm_bf16_fp32_v1", &rmsnorm_bf16_fp32_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_bf16_fp32_v2", &rmsnorm_bf16_fp32_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_bf16_fp32_v4", &rmsnorm_bf16_fp32_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
-    m.def("rmsnorm_bf16_fp32_v8", &rmsnorm_bf16_fp32_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f, "num_threads"_a=256);
+    m.def("rmsnorm_bf16_fp32_v1", &rmsnorm_bf16_fp32_v1, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_bf16_fp32_v2", &rmsnorm_bf16_fp32_v2, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_bf16_fp32_v4", &rmsnorm_bf16_fp32_v4, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
+    m.def("rmsnorm_bf16_fp32_v8", &rmsnorm_bf16_fp32_v8, "x"_a, "gamma"_a, "epsilon"_a=1e-5f);
 }
 
 // -------------------------------------
