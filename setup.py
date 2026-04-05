@@ -2,10 +2,11 @@ from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 setup(
-    name="Kernels",
+    name="ModelComponentsAndKernels", # Project name (doesn't really do anything lol, just the pip install)
+    ext_package="ComponentsAndKernels",
     ext_modules=[
         CUDAExtension(
-            name="fused_norms",
+            name="Kernels.fused_norms", # Compiled extension module (import path)
             sources=[
                 "kernels/cuda/bindings/bindings.cpp",
                 "kernels/cuda/norms/rmsnorm.cu"

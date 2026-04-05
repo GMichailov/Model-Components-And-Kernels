@@ -29,6 +29,9 @@ namespace kernels {
         return T(fp32_val);
     }
 
+    template<typename scalar_t, int vec_size>
+    struct alignas(sizeof(scalar_t) * vec_size) aligned_vector{ scalar_t val[vec_size]; };
+
     // NOTE: The datatypes that stuff 2 of the same (ie half2 and __nv_bfloat162) are not being unpacked correctly.
     // Still not clear if even worth unpacking or simply avoiding.
 
@@ -131,6 +134,9 @@ namespace launchers {
 
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_TYPE, int DIM_X>
         at::Tensor cuda_rmsnorm_divisble_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+            TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
+            TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
+            TORCH_CHECK(gamma.numel() == DIM_X, "Expected gamma len ", DIM_X, " but got ", gamma.numel());
             at::Tensor y = at::empty_like(x);
             dim3 grid(x.numel() / DIM_X);
             dim3 block(num_threads);
@@ -140,6 +146,9 @@ namespace launchers {
 
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_TYPE, int DIM_X>
         at::Tensor cuda_rmsnorm_indivisble_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+            TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
+            TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
+            TORCH_CHECK(gamma.numel() == DIM_X, "Expected gamma len ", DIM_X, " but got ", gamma.numel());
             at::Tensor y = at::empty_like(x);
             dim3 grid(x.numel() / DIM_X);
             dim3 block(num_threads);
