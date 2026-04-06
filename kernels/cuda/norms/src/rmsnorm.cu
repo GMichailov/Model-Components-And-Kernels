@@ -33,7 +33,7 @@ namespace kernels {
     struct alignas(sizeof(scalar_t) * vec_size) aligned_vector{ scalar_t val[vec_size]; };
 
     template<typename wgt_scalar_t, int vec_size>
-    struct alignas(sizeof(wgt_scalar_t) * vec_size) aligned_vector{ wgt_scalar_t val[vec_size]; };
+    struct alignas(sizeof(wgt_scalar_t) * vec_size) aligned_wgt_vector{ wgt_scalar_t val[vec_size]; };
 
     // Currently enforces DIM_X divisible by VECTORIZED_LOAD_TYPE.
     template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
