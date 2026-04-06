@@ -8,8 +8,8 @@ setup(
         CUDAExtension(
             name="Kernels.fused_norms", # Compiled extension module (import path)
             sources=[
-                "kernels/cuda/bindings/bindings.cpp",
-                "kernels/cuda/norms/rmsnorm.cu"
+                "kernels/cuda/norms/bindings/bindings.cpp",
+                "kernels/cuda/norms/src/rmsnorm.cu"
             ],
             extra_compile_args={
                 "cxx": ["-O3"],

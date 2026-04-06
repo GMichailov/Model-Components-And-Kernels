@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../utils.cuh"
+#include "../../utils.cuh"
 #include <torch/torch.h>
 #include <torch/extension.h>
 #include <ATen/Dispatch.h>
