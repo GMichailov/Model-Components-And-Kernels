@@ -81,16 +81,17 @@ namespace kernels {
         }
     }
 
-    /*
     // Currently allows DIM_X to be indivisible by VECTORIZED_LOAD_TYPE.
-    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename VECTORIZED_LOAD_TYPE, typename CALCULATION_DTYPE, int DIM_X>
+    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
     __global__ void rmsnorm_kernel_indivisible_forward(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon)
     {
-        static_assert(sizeof(VECTORIZED_LOAD_TYPE) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
-        static_assert(sizeof(VECTORIZED_LOAD_TYPE) >= sizeof(ACTIVATION_DTYPE), "Vectorized load type must be the same or larger than the activation type.");
+        using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
+        static_assert(THREADS_PER_BLOCK <= 1024, "Max threads per block is 1024.");
+        static_assert(sizeof(vec_t) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
+        static_assert(sizeof(vec_t) >= sizeof(ACTIVATION_DTYPE), "Vectorized load type must be the same or larger than the activation type.");
         static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation accumulation datatype must be a larger size than activation type.");
-        constexpr int act_vec_loads = sizeof(VECTORIZED_LOAD_TYPE) / sizeof(ACTIVATION_DTYPE);
+        constexpr int act_vec_loads = sizeof(vec_t) / sizeof(ACTIVATION_DTYPE);
         constexpr int num_loads = DIM_X / act_vec_loads;
         constexpr int tail = DIM_X % act_vec_loads;
         int tail_idx = num_loads * act_vec_loads + threadIdx.x;
@@ -99,10 +100,10 @@ namespace kernels {
         const ACTIVATION_DTYPE* x_row = x + blockIdx.x * DIM_X;
         ACTIVATION_DTYPE* y_row = y + blockIdx.x * DIM_X;
         CALCULATION_DTYPE thread_sum{0};
-        const VECTORIZED_LOAD_TYPE* x_vec = reinterpret_cast<const VECTORIZED_LOAD_TYPE*>(x_row);
+        const vec_t* x_vec = reinterpret_cast<const vec_t*>(x_row);
         #pragma unroll
-        for (uint i{threadIdx.x}; i < num_loads; i += blockDim.x) {
-            VECTORIZED_LOAD_TYPE v = x_vec[i];
+        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
+            vec_t v = x_vec[i];
             memcpy(x_vals, &v, sizeof(v));
             #pragma unroll
             for (int j{0}; j < act_vec_loads; ++j) {
@@ -115,20 +116,21 @@ namespace kernels {
         __shared__ CALCULATION_DTYPE inv_rms;
         if (threadIdx.x == 0) inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
         __syncthreads();
-        VECTORIZED_LOAD_TYPE* y_vec = reinterpret_cast<VECTORIZED_LOAD_TYPE*>(y_row);
-        for (uint i{threadIdx.x}; i < num_loads; i += blockDim.x) {
-            VECTORIZED_LOAD_TYPE x_vec_val = x_vec[i];
+        vec_t* y_vec = reinterpret_cast<vec_t*>(y_row);
+        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
+            vec_t x_vec_val = x_vec[i];
             memcpy(x_vals, &x_vec_val, sizeof(x_vec_val));
             #pragma unroll
             for (int j{0}; j < act_vec_loads; ++j) {
                 CALCULATION_DTYPE weight = static_cast<CALCULATION_DTYPE>(gamma[j + i * act_vec_loads]);
                 out[j] = static_cast<ACTIVATION_DTYPE>(static_cast<CALCULATION_DTYPE>(x_vals[j]) * weight * inv_rms);
             }
-            memcpy(y_vec + i, out, sizeof(VECTORIZED_LOAD_TYPE));
+            vec_t out_vec;
+            memcpy(&out_vec, out, sizeof(out));
+            y_vec[i] = out_vec;
         }
         if (threadIdx.x < tail) { y_row[tail_idx] = static_cast<ACTIVATION_DTYPE>(static_cast<CALCULATION_DTYPE>(x_row[tail_idx]) * static_cast<CALCULATION_DTYPE>(gamma[tail_idx]) * inv_rms); }
     }
-    */
 }
 
 namespace launchers {
@@ -150,9 +152,8 @@ namespace launchers {
             return y;
         }
 
-        /*
-        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X>
-        at::Tensor cuda_rmsnorm_indivisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int num_threads) {
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
+        at::Tensor cuda_rmsnorm_indivisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon) {
             using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
             TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
             TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
@@ -161,11 +162,10 @@ namespace launchers {
             at::Tensor y = at::empty_like(x);
             TORCH_CHECK(reinterpret_cast<uintptr_t>(y.data_ptr<ACTIVATION_DTYPE>()) % alignof(vec_t) == 0, "y is not properly aligned for vectorized access");
             dim3 grid(x.numel() / DIM_X);
-            dim3 block(num_threads);
-            kernels::rmsnorm_kernel_indivisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, vec_t, CALCULATION_DTYPE, DIM_X><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
+            dim3 block(THREADS_PER_BLOCK);
+            kernels::rmsnorm_kernel_indivisible_forward<ACTIVATION_DTYPE, WEIGHT_DTYPE, CALCULATION_DTYPE, VECTORIZED_LOAD_COUNT, DIM_X, THREADS_PER_BLOCK><<<grid, block>>>(x.data_ptr<ACTIVATION_DTYPE>(), gamma.data_ptr<WEIGHT_DTYPE>(), y.data_ptr<ACTIVATION_DTYPE>(), epsilon);
             return y;
         }
-        */
     }
 
     namespace online {
