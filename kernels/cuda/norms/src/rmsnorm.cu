@@ -41,27 +41,24 @@ namespace kernels {
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon)
     {
         using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
+        using wgt_vec_t = aligned_wgt_vector<WEIGHT_DTYPE, VECTORIZED_LOAD_COUNT>;
+        static_assert(VECTORIZED_LOAD_COUNT > 0, "Vectorized load count must be at least 1.");
         static_assert(THREADS_PER_BLOCK <= 1024, "Max threads per block is 1024.");
-        static_assert(sizeof(vec_t) <= 16, "Max vectorized load size must be less than or equal to 128 bytes.");
-        static_assert((DIM_X * sizeof(ACTIVATION_DTYPE)) % sizeof(vec_t) == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
-        static_assert(sizeof(vec_t) % sizeof(ACTIVATION_DTYPE) == 0, "Vectorized load type must be a a multiple of the activation size.");
-        static_assert(sizeof(vec_t) >= sizeof(ACTIVATION_DTYPE), "Vectorized load type must be the same or larger than the activation type.");
+        static_assert(sizeof(vec_t) <= 16, "Max vectorized load size must be less than or equal to 128 bits/16 bytes.");
+        static_assert(DIM_X % VECTORIZED_LOAD_COUNT == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
         static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation datatype must be a larger or equal to in size to activation type.");
-        constexpr int act_vec_loads = sizeof(vec_t) / sizeof(ACTIVATION_DTYPE);
-        constexpr int num_loads = DIM_X * sizeof(ACTIVATION_DTYPE) / sizeof(vec_t);
-        ACTIVATION_DTYPE x_vals[act_vec_loads];
-        ACTIVATION_DTYPE out[act_vec_loads];
+        constexpr int num_loads = DIM_X / VECTORIZED_LOAD_COUNT;
         const ACTIVATION_DTYPE* x_row = x + blockIdx.x * DIM_X;
         ACTIVATION_DTYPE* y_row = y + blockIdx.x * DIM_X;
         CALCULATION_DTYPE thread_sum{0};
         const vec_t* x_vec = reinterpret_cast<const vec_t*>(x_row);
+        const wgt_vec_t* gamma_vec = reinterpret_cast<const wgt_vec_t*>(gamma);
         #pragma unroll
-        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
+        for (int i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
             vec_t v = x_vec[i];
-            memcpy(x_vals, &v, sizeof(v));
             #pragma unroll
-            for (int j{0}; j < act_vec_loads; ++j) {
-                CALCULATION_DTYPE val = static_cast<CALCULATION_DTYPE>(x_vals[j]);
+            for (int j{0}; j < VECTORIZED_LOAD_COUNT; ++j) {
+                CALCULATION_DTYPE val = static_cast<CALCULATION_DTYPE>(v.val[j]);
                 thread_sum += val*val;
             }
         }
@@ -72,15 +69,13 @@ namespace kernels {
         vec_t* y_vec = reinterpret_cast<vec_t*>(y_row);
         for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
             vec_t x_vec_val = x_vec[i];
-            memcpy(x_vals, &x_vec_val, sizeof(x_vec_val));
+            wgt_vec_t gamma_vec_val = gamma_vec[i];
+            vec_t out;
             #pragma unroll
-            for (int j{0}; j < act_vec_loads; ++j) {
-                CALCULATION_DTYPE weight = static_cast<CALCULATION_DTYPE>(gamma[j + i * act_vec_loads]);
-                out[j] = static_cast<ACTIVATION_DTYPE>(static_cast<CALCULATION_DTYPE>(x_vals[j]) * weight * inv_rms);
+            for (int j{0}; j < VECTORIZED_LOAD_COUNT; ++j) {
+                out.val[j] = static_cast<ACTIVATION_DTYPE>(static_cast<CALCULATION_DTYPE>(x_vec_val.val[j]) * static_cast<CALCULATION_DTYPE>(gamma_vec_val.val[j]) * inv_rms);
             }
-            vec_t out_vec;
-            memcpy(&out_vec, out, sizeof(out));
-            y_vec[i] = out_vec;
+            y_vec[i] = out;
         }
     }
 
@@ -157,7 +152,7 @@ namespace launchers {
 
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
         at::Tensor cuda_rmsnorm_indivisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon) {
-            using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
+            using vec_t = kernels::aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
             TORCH_CHECK(x.dim() == 2, "x must be 2D, got dim ", x.dim());
             TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
             TORCH_CHECK(gamma.numel() == DIM_X, "Expected gamma len ", DIM_X, " but got ", gamma.numel());
