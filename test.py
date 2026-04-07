@@ -88,3 +88,52 @@ print("- If TEST 1 fails: vectorized loads are the problem")
 print("- If TEST 4 passes but TEST 2 fails: packed store path is broken")
 print("- If TEST 4 passes but TEST 5 fails: gamma read/unpack is broken")
 print("=" * 60)
+
+# ============================================================================
+# INDIVISIBLE KERNEL TESTS
+# ============================================================================
+
+print("\n" + "=" * 60)
+print("INDIVISIBLE KERNEL TESTS")
+print("=" * 60)
+
+# Test 6: Indivisible variants (using divisible dims for now)
+print("\n[TEST 6] INDIVISIBLE KERNELS (divisible dims, v4)")
+print("-" * 40)
+for name, dtype, weight_dtype, kernel_fn in [
+    ("fp16_indivisible_v4", torch.float16, torch.float16, fused_norms.rmsnorm_forward_fp16_fp16_fp32_indivisible_v4),
+    ("bf16_indivisible_v4", torch.bfloat16, torch.bfloat16, fused_norms.rmsnorm_forward_bf16_bf16_fp32_indivisible_v4),
+]:
+    x = torch.randn(32, 128, dtype=dtype, device='cuda')
+    gamma = torch.randn(128, dtype=weight_dtype, device='cuda')
+    y_custom = kernel_fn(x, gamma, 1e-5, 256)
+    y_ref = rms_norm_reference_fp32(x, gamma, 1e-5)
+    max_diff = (y_custom - y_ref).abs().max().item()
+    print(f"  {name}: max_diff = {max_diff:.6e}  {'PASS' if max_diff < 1e-3 else 'FAIL'}")
+
+# Test 7: Indivisible 8-element variants
+print("\n[TEST 7] INDIVISIBLE KERNELS (v8)")
+print("-" * 40)
+for name, dtype, weight_dtype, kernel_fn in [
+    ("fp16_indivisible_v8", torch.float16, torch.float16, fused_norms.rmsnorm_forward_fp16_fp16_fp32_indivisible_v8),
+    ("bf16_indivisible_v8", torch.bfloat16, torch.bfloat16, fused_norms.rmsnorm_forward_bf16_bf16_fp32_indivisible_v8),
+]:
+    x = torch.randn(32, 256, dtype=dtype, device='cuda')
+    gamma = torch.randn(256, dtype=weight_dtype, device='cuda')
+    y_custom = kernel_fn(x, gamma, 1e-5, 256)
+    y_ref = rms_norm_reference_fp32(x, gamma, 1e-5)
+    max_diff = (y_custom - y_ref).abs().max().item()
+    print(f"  {name}: max_diff = {max_diff:.6e}  {'PASS' if max_diff < 1e-3 else 'FAIL'}")
+
+# Test 8: TRULY INDIVISIBLE dimension (130 % 8 = 2, tail of 2 elements)
+#print("\n[TEST 8] TRULY INDIVISIBLE DIM (130, tail=2)")
+#print("-" * 40)
+#x = torch.randn(32, 130, dtype=torch.float16, device='cuda')
+#gamma = torch.randn(130, dtype=torch.float16, device='cuda')
+#y_custom = fused_norms.rmsnorm_forward_fp16_fp16_fp32_indivisible_130(x, gamma, 1e-5)
+#y_ref = rms_norm_reference_fp32(x, gamma, 1e-5)
+#max_diff = (y_custom - y_ref).abs().max().item()
+#print(f"  fp16_130_v8: max_diff = {max_diff:.6e}  {'PASS' if max_diff < 1e-3 else 'FAIL'}")
+#print(f"    (130 % 8 = {130 % 8} tail elements)")
+
+print("\n" + "=" * 60)
