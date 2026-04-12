@@ -177,6 +177,47 @@ namespace launchers {
 }
 
 // ============================================================================
+// MASSIVE SCALE TEST INSTANTIATIONS (REMOVE AFTER TESTING)
+// BF16/BF16/FP32, DIM=5120, VLCOUNT=1,2,4,8, THREADS=32,64,96,128,256,512,640,1024
+// ============================================================================
+
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 32>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 64>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 96>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 128>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 512>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 640>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 1024>(const at::Tensor&, const at::Tensor&, float);
+
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 32>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 64>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 96>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 128>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 512>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 640>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 1024>(const at::Tensor&, const at::Tensor&, float);
+
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 32>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 64>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 96>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 128>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 512>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 640>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 1024>(const at::Tensor&, const at::Tensor&, float);
+
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 32>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 64>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 96>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 128>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 256>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 512>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 640>(const at::Tensor&, const at::Tensor&, float);
+template at::Tensor norms::launchers::offline::cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 1024>(const at::Tensor&, const at::Tensor&, float);
+
+// ============================================================================
 // Explicit template instantiations
 // Dimensions: 128, 256, 512
 // Threads: 128, 256, 512

@@ -3,3 +3,4 @@ build
 archive
 *.so
 TODO.md
+__pycache__/

@@ -1760,3 +1760,120 @@ at::Tensor rmsnorm_forward_fp16_fp16_fp32_indivisible_130(
 ) {
     return cuda_rmsnorm_indivisible_forward_launcher_offline<at::Half, at::Half, float, 8, 130, 256>(x, gamma, epsilon);
 }
+
+// ============================================================================
+// MASSIVE SCALE TEST LAUNCHERS (REMOVE AFTER TESTING)
+// BF16/BF16/FP32, DIM=5120, VLCOUNT=1,2,4,8, THREADS=32,64,96,128,256,512,640,1024
+// ============================================================================
+
+at::Tensor rmsnorm_forward_bf16_bf16_fp32_v1_dim5120(
+    const at::Tensor& x,
+    const at::Tensor& gamma,
+    float epsilon,
+    int num_threads
+) {
+    switch (num_threads) {
+        case 32:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 32>(x, gamma, epsilon);
+        case 64:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 64>(x, gamma, epsilon);
+        case 96:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 96>(x, gamma, epsilon);
+        case 128:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 128>(x, gamma, epsilon);
+        case 256:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 256>(x, gamma, epsilon);
+        case 512:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 512>(x, gamma, epsilon);
+        case 640:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 640>(x, gamma, epsilon);
+        case 1024:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 1, 5120, 1024>(x, gamma, epsilon);
+        default:
+            TORCH_CHECK(false, "Unsupported thread count");
+    }
+}
+
+at::Tensor rmsnorm_forward_bf16_bf16_fp32_v2_dim5120(
+    const at::Tensor& x,
+    const at::Tensor& gamma,
+    float epsilon,
+    int num_threads
+) {
+    switch (num_threads) {
+        case 32:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 32>(x, gamma, epsilon);
+        case 64:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 64>(x, gamma, epsilon);
+        case 96:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 96>(x, gamma, epsilon);
+        case 128:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 128>(x, gamma, epsilon);
+        case 256:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 256>(x, gamma, epsilon);
+        case 512:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 512>(x, gamma, epsilon);
+        case 640:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 640>(x, gamma, epsilon);
+        case 1024:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 2, 5120, 1024>(x, gamma, epsilon);
+        default:
+            TORCH_CHECK(false, "Unsupported thread count");
+    }
+}
+
+at::Tensor rmsnorm_forward_bf16_bf16_fp32_v4_dim5120(
+    const at::Tensor& x,
+    const at::Tensor& gamma,
+    float epsilon,
+    int num_threads
+) {
+    switch (num_threads) {
+        case 32:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 32>(x, gamma, epsilon);
+        case 64:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 64>(x, gamma, epsilon);
+        case 96:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 96>(x, gamma, epsilon);
+        case 128:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 128>(x, gamma, epsilon);
+        case 256:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 256>(x, gamma, epsilon);
+        case 512:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 512>(x, gamma, epsilon);
+        case 640:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 640>(x, gamma, epsilon);
+        case 1024:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 4, 5120, 1024>(x, gamma, epsilon);
+        default:
+            TORCH_CHECK(false, "Unsupported thread count");
+    }
+}
+
+at::Tensor rmsnorm_forward_bf16_bf16_fp32_v8_dim5120(
+    const at::Tensor& x,
+    const at::Tensor& gamma,
+    float epsilon,
+    int num_threads
+) {
+    switch (num_threads) {
+        case 32:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 32>(x, gamma, epsilon);
+        case 64:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 64>(x, gamma, epsilon);
+        case 96:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 96>(x, gamma, epsilon);
+        case 128:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 128>(x, gamma, epsilon);
+        case 256:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 256>(x, gamma, epsilon);
+        case 512:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 512>(x, gamma, epsilon);
+        case 640:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 640>(x, gamma, epsilon);
+        case 1024:
+            return cuda_rmsnorm_divisible_forward_launcher_offline<at::BFloat16, at::BFloat16, float, 8, 5120, 1024>(x, gamma, epsilon);
+        default:
+            TORCH_CHECK(false, "Unsupported thread count");
+    }
+}
