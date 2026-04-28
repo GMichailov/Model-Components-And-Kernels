@@ -16,10 +16,9 @@ namespace kernels {
     __global__ void rmsnorm_kernel_divisible_forward(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon);
     
-    // Allows DIM_X to be indivisible by VECTORIZED_LOAD_COUNT * ACTIVATION DATATYPE
-    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
-    __global__ void rmsnorm_kernel_indivisible_forward(
-        const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon);
+    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int THREADS_PER_BLOCK>
+    __global__ void rmsnorm_kernel_forward_online(
+        const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon, int dim_x);
 }
 
 namespace launchers {
@@ -29,14 +28,12 @@ namespace launchers {
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
         at::Tensor cuda_rmsnorm_divisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon);
 
-        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
-        at::Tensor cuda_rmsnorm_indivisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon);
-
     }
 
     namespace online {
 
-
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int THREADS_PER_BLOCK>
+        at::Tensor cuda_rms_norm_forward_launcher_online(const at::Tensor &x, const at::Tensor &gamma, float epsilon, int dim_x);
 
     }
 
