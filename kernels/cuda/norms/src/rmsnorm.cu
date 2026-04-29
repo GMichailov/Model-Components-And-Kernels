@@ -83,6 +83,7 @@ namespace kernels {
         if (threadIdx.x == 0) inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
         __syncthreads();
         vec_t* y_vec = reinterpret_cast<vec_t*>(y_row);
+        #pragma unroll
         for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
             vec_t x_vec_val = x_vec[i];
             wgt_vec_t gamma_vec_val = gamma_vec[i];
