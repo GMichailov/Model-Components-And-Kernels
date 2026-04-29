@@ -68,7 +68,7 @@ namespace kernels {
             }
         }
         sum = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
-        if (threadIdx.x == 0) std_dev = static_cast<CALCULATION_DTYPE>(rsqrtf(sum + epsilon));
+        if (threadIdx.x == 0) std_dev = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
         __syncthreads();
         // Calculate normalized values.
         CALCULATION_DTYPE local_mean = mean;
@@ -103,6 +103,72 @@ namespace kernels {
         }
     }
 
+    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int THREADS_PER_BLOCK>
+    __global__ void layer_norm_forward_kernel_online(
+        const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, const WEIGHT_DTYPE* __restrict__ bias, ACTIVATION_DTYPE* __restrict__ y, float epsilon, int dim_x) 
+    {
+        static_assert(THREADS_PER_BLOCK <= 1024, "Max threads per block is 1024.");
+        static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation datatype must be a larger or equal to in size to activation type.");
+        __shared__ CALCULATION_DTYPE mean;
+        __shared__ CALCULATION_DTYPE std_dev;
+        const ACTIVATION_DTYPE* x_row = x + blockIdx.x * dim_x;
+        ACTIVATION_DTYPE* y_row = y + blockIdx.x * dim_x;
+        CALCULATION_DTYPE thread_sum{0};
+        // Calculate Mean
+        for (uint i{threadIdx.x}; i < dim_x; i += THREADS_PER_BLOCK) {
+            CALCULATION_DTYPE val;
+            if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                val = to_float(x_row[i]);
+            } else if constexpr (std::is_same_v<CALCULATION_DTYPE, __nv_bfloat16>) {
+                val = to_bfloat16(x_row[i]);
+            } else if constexpr (std::is_same_v<CALCULATION_DTYPE, half>) {
+                val = to_half(x_row[i]);
+            }
+            thread_sum += val;
+        }
+        CALCULATION_DTYPE sum = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
+        if (threadIdx.x == 0) mean = static_cast<CALCULATION_DTYPE>(sum / dim_x);
+        __syncthreads();
+        // Calculate Standard Deviation
+        thread_sum = 0;
+        for (uint i{threadIdx.x}; i < dim_x; i += THREADS_PER_BLOCK) {
+            CALCULATION_DTYPE val;
+            if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                val = to_float(x_row[i]);
+            } else if constexpr (std::is_same_v<CALCULATION_DTYPE, __nv_bfloat16>) {
+                val = to_bfloat16(x_row[i]);
+            } else if constexpr (std::is_same_v<CALCULATION_DTYPE, half>) {
+                val = to_half(x_row[i]);
+            }
+            val -= mean;
+            thread_sum += val * val;
+        }
+        sum = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
+        if (threadIdx.x == 0) std_dev = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / dim_x + epsilon));
+        __syncthreads();
+        // Calculate normalized values.
+        CALCULATION_DTYPE local_mean = mean;
+        CALCULATION_DTYPE local_std = std_dev;
+        for (uint i{threadIdx.x}; i < dim_x; i += THREADS_PER_BLOCK) {
+            // CALC_DTYPE >= ACT_DTYPE and bloat and half cannot be used simultaneously.
+            if constexpr (std::is_same_v<ACTIVATION_DTYPE, float>) {
+                // Float and Float
+                y_row[i] = gamma[i] * (x_row[i] - local_mean) / std_dev + bias[i];
+            } else if constexpr (std::is_same_v<ACTIVATION_DTYPE, half>) {
+                if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                    y_row[i] = to_half(to_float(gamma[i]) * to_float((x_row[i] - local_mean) / std_dev + bias[i]));
+                } else if constexpr (std::is_same_v<CALCULATION_DTYPE, half>) {
+                    y_row[i] = gamma[i] * (x_row[i] - local_mean) / std_dev + bias[i];
+                }
+            } else if constexpr (std::is_same_v<ACTIVATION_DTYPE, __nv_bfloat16>) {
+                if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                    y_row[i] = to_bfloat16(to_float(gamma[i]) * to_float((x_row[i] - local_mean) / std_dev + bias[i]));
+                } else if constexpr (std::is_same_v<CALCULATION_DTYPE, __nv_bfloat16>) {
+                    y_row[i] = gamma[i] * (x_row[i] - local_mean) / std_dev + bias[i];
+                }
+            }
+        }
+    }
 }
 
 }
