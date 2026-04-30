@@ -77,9 +77,8 @@ namespace kernels {
                 thread_sum += val*val;
             }
         }
-        CALCULATION_DTYPE sum = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
-        __shared__ CALCULATION_DTYPE inv_rms;
-        if (threadIdx.x == 0) inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
+        CALCULATION_DTYPE inv_rms = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
+        inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / DIM_X + epsilon));
         __syncthreads();
         vec_t* y_vec = reinterpret_cast<vec_t*>(y_row);
         #pragma unroll
@@ -220,9 +219,8 @@ namespace kernels {
             }
             thread_sum += val*val;
         }
-        CALCULATION_DTYPE sum = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
-        __shared__ CALCULATION_DTYPE inv_rms;
-        if (threadIdx.x == 0) inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / dim_x + epsilon));
+        CALCULATION_DTYPE inv_rms = block_reduce_sum<CALCULATION_DTYPE>(thread_sum);
+        inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(sum / dim_x + epsilon));
         __syncthreads();
         for (uint i{threadIdx.x}; i < dim_x; i += THREADS_PER_BLOCK) {
             ACTIVATION_DTYPE out;
