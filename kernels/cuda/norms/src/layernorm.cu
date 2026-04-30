@@ -169,6 +169,62 @@ namespace kernels {
             }
         }
     }
+
+}
+
+namespace launchers {
+
+    namespace offline {
+        
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
+        at::Tensor layer_norm_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, const at::Tensor &bias, float epsilon) {
+            using cuda_act_dtype = typename torch_to_raw<ACTIVATION_DTYPE>::type;
+            using cuda_wgt_dtype = typename torch_to_raw<WEIGHT_DTYPE>::type;
+            using cuda_calc_dtype = typename torch_to_raw<CALCULATION_DTYPE>::type;
+            using vec_t = norms::kernels::aligned_vector<cuda_act_dtype, VECTORIZED_LOAD_COUNT>;
+            using wgt_vec_t = norms::kernels::aligned_wgt_vector<cuda_wgt_dtype, VECTORIZED_LOAD_COUNT>;
+            TORCH_CHECK(x.size(1) == DIM_X, "Expected hidden dim ", DIM_X, " but got ", x.size(1));
+            TORCH_CHECK(gamma.numel() == DIM_X, "Expected gamma len ", DIM_X, " but got ", gamma.numel());
+            TORCH_CHECK(bias.numel() == DIM_X, "Expected bias len ", DIM_X, " but got ", bias.numel());
+            at::Tensor y = at::empty_like(x);
+            const auto* x_ptr = reinterpret_cast<const cuda_act_dtype*>(x.data_ptr<ACTIVATION_DTYPE>());
+            const auto* gamma_ptr = reinterpret_cast<const cuda_wgt_dtype*>(gamma.data_ptr<WEIGHT_DTYPE>());
+            const auto* bias_ptr = reinterpret_cast<const cuda_wgt_dtype*>(bias.data_ptr<WEIGHT_DTYPE>());
+            auto* y_ptr = reinterpret_cast<cuda_act_dtype*>(y.data_ptr<ACTIVATION_DTYPE>());
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(x_ptr) % alignof(vec_t) == 0, "x is not properly aligned for vectorized access");
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(gamma_ptr) % alignof(wgt_vec_t) == 0, "gamma is not properly aligned for vectorized access");
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(bias_ptr) % alignof(wgt_vec_t) == 0, "bias is not properly aligned for vectorized access");
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(y_ptr) % alignof(vec_t) == 0, "y is not properly aligned for vectorized access");
+            dim3 grid(x.numel() / DIM_X);
+            dim3 block(THREADS_PER_BLOCK);
+            norms::kernels::layer_norm_forward_kernel_offline<cuda_act_dtype, cuda_wgt_dtype, cuda_calc_dtype, VECTORIZED_LOAD_COUNT, DIM_X, THREADS_PER_BLOCK><<<grid, block>>>(x_ptr, gamma_ptr, bias_ptr, y_ptr, epsilon);
+            return y;
+        }
+        
+    }
+
+    namespace online {
+
+        template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int THREADS_PER_BLOCK>
+        at::Tensor layer_norm_forward_launcher_online(const at::Tensor &x, const at::Tensor &gamma, const at::Tensor &bias, float epsilon, int dim_x) {
+            using cuda_act_dtype = typename torch_to_raw<ACTIVATION_DTYPE>::type;
+            using cuda_wgt_dtype = typename torch_to_raw<WEIGHT_DTYPE>::type;
+            using cuda_calc_dtype = typename torch_to_raw<CALCULATION_DTYPE>::type;
+            TORCH_CHECK(gamma.numel() == dim_x, "Expected gamma len ", dim_x, " but got ", gamma.numel());
+            TORCH_CHECK(bias.numel() == dim_x, "Expected bias len ", dim_x, " but got ", gamma.numel());
+            at::Tensor y = at::empty_like(x);
+            const auto* x_ptr = reinterpret_cast<const cuda_act_dtype*>(x.data_ptr<ACTIVATION_DTYPE>());
+            const auto* gamma_ptr = reinterpret_cast<const cuda_wgt_dtype*>(gamma.data_ptr<WEIGHT_DTYPE>());
+            const auto* bias_ptr = reinterpret_cast<const cuda_wgt_dtype*>(bias.data_ptr<WEIGHT_DTYPE>());
+            auto* y_ptr = reinterpret_cast<cuda_act_dtype*>(y.data_ptr<ACTIVATION_DTYPE>());
+            dim3 grid(x.numel() / dim_x);
+            dim3 block(THREADS_PER_BLOCK);
+            norms::kernels::layer_norm_forward_kernel_online<cuda_act_dtype, cuda_wgt_dtype, cuda_calc_dtype, THREADS_PER_BLOCK><<<grid, block>>>(x_ptr, gamma_ptr, y_ptr, bias_ptr, epsilon, dim_x);
+            return y;
+        }
+
+    }
+
 }
 
 }

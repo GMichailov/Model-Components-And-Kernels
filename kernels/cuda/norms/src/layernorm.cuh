@@ -25,10 +25,10 @@ namespace kernels {
 namespace launchers {
 
     namespace offline {
-
+        
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
         at::Tensor layer_norm_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, const at::Tensor &bias, float epsilon);
-
+        
     }
 
     namespace online {
