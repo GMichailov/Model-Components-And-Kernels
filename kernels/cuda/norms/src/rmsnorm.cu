@@ -1,4 +1,3 @@
-#include <torch/extension.h>
 #include "rmsnorm.cuh"
 
 // Important ones atm are fp32, half(fp16), and bf16 (__nv_bfloat16) for activation and calculation.
@@ -45,7 +44,7 @@ namespace kernels {
 
     // Currently enforces DIM_X divisible by VECTORIZED_LOAD_TYPE. Launcher will default to 1 for weird dims.
     template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
-    __global__ void rmsnorm_kernel_forward(
+    __global__ void rms_norm_kernel_forward_offline(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon)
     {
         using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
@@ -116,7 +115,7 @@ namespace kernels {
 
 
     template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int THREADS_PER_BLOCK>
-    __global__ void rmsnorm_kernel_forward_online(
+    __global__ void rms_norm_kernel_forward_online(
         const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, ACTIVATION_DTYPE* __restrict__ y, float epsilon, int dim_x)
     {
         static_assert(THREADS_PER_BLOCK <= 1024, "Max threads per block is 1024.");
@@ -190,7 +189,7 @@ namespace launchers {
     namespace offline {
 
         template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
-        at::Tensor cuda_rmsnorm_divisible_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon) {
+        at::Tensor rms_norm_forward_launcher_offline(const at::Tensor &x, const at::Tensor &gamma, float epsilon) {
             using cuda_act_dtype = typename torch_to_raw<ACTIVATION_DTYPE>::type;
             using cuda_wgt_dtype = typename torch_to_raw<WEIGHT_DTYPE>::type;
             using cuda_calc_dtype = typename torch_to_raw<CALCULATION_DTYPE>::type;
@@ -207,7 +206,7 @@ namespace launchers {
             TORCH_CHECK(reinterpret_cast<uintptr_t>(y_ptr) % alignof(vec_t) == 0, "y is not properly aligned for vectorized access");
             dim3 grid(x.numel() / DIM_X);
             dim3 block(THREADS_PER_BLOCK);
-            norms::kernels::rmsnorm_kernel_forward<cuda_act_dtype, cuda_wgt_dtype, cuda_calc_dtype, VECTORIZED_LOAD_COUNT, DIM_X, THREADS_PER_BLOCK><<<grid, block>>>(x_ptr, gamma_ptr, y_ptr, epsilon);
+            norms::kernels::rms_norm_kernel_forward_offline<cuda_act_dtype, cuda_wgt_dtype, cuda_calc_dtype, VECTORIZED_LOAD_COUNT, DIM_X, THREADS_PER_BLOCK><<<grid, block>>>(x_ptr, gamma_ptr, y_ptr, epsilon);
             return y;
         }
     }
@@ -226,7 +225,7 @@ namespace launchers {
             auto* y_ptr = reinterpret_cast<cuda_act_dtype*>(y.data_ptr<ACTIVATION_DTYPE>());
             dim3 grid(x.numel() / dim_x);
             dim3 block(THREADS_PER_BLOCK);
-            norms::kernels::rmsnorm_kernel_forward_online<cuda_act_dtype, cuda_wgt_dtype, cuda_calc_dtype, THREADS_PER_BLOCK><<<grid, block>>>(x_ptr, gamma_ptr, y_ptr, epsilon, dim_x);
+            norms::kernels::rms_norm_kernel_forward_online<cuda_act_dtype, cuda_wgt_dtype, cuda_calc_dtype, THREADS_PER_BLOCK><<<grid, block>>>(x_ptr, gamma_ptr, y_ptr, epsilon, dim_x);
             return y;
         }
 
