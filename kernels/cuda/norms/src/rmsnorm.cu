@@ -111,6 +111,91 @@ namespace kernels {
         }
     }
 
+    // VECTORIZED_LOAD_COUNT: number of elements per vectorized load (1, 2, 4, 8)
+    // DIM_X must be divisible by VECTORIZED_LOAD_COUNT for this kernel
+    // dL/dx_i = (dL/dy_i * gamma_i) / RMS - (x_i / (DIM_X * RMS^3) * SUM(dL/dy_j * gamma_j * x_j) )
+    template<typename ACTIVATION_DTYPE, typename WEIGHT_DTYPE, typename CALCULATION_DTYPE, int VECTORIZED_LOAD_COUNT, int DIM_X, int THREADS_PER_BLOCK>
+    __global__ void rms_norm_kernel_backward_offline_dx(
+        const ACTIVATION_DTYPE* __restrict__ x, const WEIGHT_DTYPE* __restrict__ gamma, const ACTIVATION_DTYPE* __restrict__ dy, ACTIVATION_DTYPE* __restrict__ dx, float epsilon)
+    {
+        using vec_t = aligned_vector<ACTIVATION_DTYPE, VECTORIZED_LOAD_COUNT>;
+        using wgt_vec_t = aligned_wgt_vector<WEIGHT_DTYPE, VECTORIZED_LOAD_COUNT>;
+        static_assert(VECTORIZED_LOAD_COUNT > 0, "Vectorized load count must be at least 1.");
+        static_assert(THREADS_PER_BLOCK <= 1024, "Max threads per block is 1024.");
+        static_assert(sizeof(vec_t) <= 16, "Max vectorized load size must be less than or equal to 128 bits/16 bytes.");
+        static_assert(DIM_X % VECTORIZED_LOAD_COUNT == 0, "Vectorized load datatype must be able to cleanly load a row of data.");
+        static_assert(sizeof(CALCULATION_DTYPE) >= sizeof(ACTIVATION_DTYPE), "Calculation datatype must be a larger or equal to in size to activation type.");
+        // Add an assertion that bfloat16 and half are NOT used together.
+        constexpr int num_loads = DIM_X / VECTORIZED_LOAD_COUNT;
+        const ACTIVATION_DTYPE* x_row = x + blockIdx.x * DIM_X;
+        ACTIVATION_DTYPE* dy_row = dy + blockIdx.x * DIM_X;
+        CALCULATION_DTYPE* thread_rms_sum{0};
+        CALCULATION_DTYPE* thread_coeff_sum{0};
+        const vec_t* x_vec = reinterpret_cast<const vec_t*>(x_row);
+        const wgt_vec_t* gamma_vec = reinterpret_cast<const wgt_vec_t*>(gamma);
+        const wgt_vec_t* dy_vec = reinterpret_cast<const vec_t*>(dy_row);
+        #pragma unroll
+        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
+            vec_t x_vec_val = x_vec[i];
+            wgt_vec_t gamma_vec_val = gamma_vec[i];
+            vec_t dy_vec_val = dy_vec[i];
+            #pragma unroll
+            for (int j{0}; j < VECTORIZED_LOAD_COUNT; ++j) {
+                CALCULATION_DTYPE x_val;
+                CALCULATION_DTYPE gamma_val;
+                CALCULATION_DTYPE dy_val;
+                if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                    x_val = to_float(x_vec_val.val[j]);
+                    gamma_val = to_float(gamma_vec_val.val[j]);
+                    dy_val = to_float(dy_vec_val.val[j]);
+                } else if constexpr (std::is_same_v<CALCULATION_DTYPE, __nv_bfloat16>) {
+                    x_val = to_bfloat16(x_vec_val.val[j]);
+                    gamma_val = to_bfloat16(gamma_vec_val.val[j]);
+                    dy_val = to_bfloat16(dy_vec_val.val[j]);
+                } else if constexpr (std::is_same_v<CALCULATION_DTYPE, half>) {
+                    x_val = to_half(x_vec_val.val[j]);
+                    gamma_val = to_half(gamma_vec_val.val[j]);
+                    dy_val = to_half(dy_vec_val.val[j]);
+                }
+                thread_rms_sum += x_val * x_val;
+                thread_coeff_sum += x_val * gamma_val * dy_val;
+            }
+        }
+        CALCULATION_DTYPE block_inv_rms = block_reduce_sum<CALCULATION_DTYPE>(thread_rms_sum);
+        block_inv_rms = static_cast<CALCULATION_DTYPE>(rsqrtf(block_rms_sum / DIM_X + epsilon));
+        CALCULATION_DTYPE block_coeff = block_reduce_sum<CALCULATION_DTYPE>(thread_coeff_sum);
+        block_coeff *= block_inv_rms * block_inv_rms * block_inv_rms * DIM_X;
+        vec_t* dx_vec = reinterpret_cast<vec_t*>(dx + blockIdx.x * DIM_X);
+        #pragma unroll
+        for (uint i{threadIdx.x}; i < num_loads; i += THREADS_PER_BLOCK) {
+            vec_t x_vec_val = x_vec[i];
+            wgt_vec_t gamma_vec_val = gamma_vec[i];
+            vec_t dy_vec_val = dy_vec[i];
+            vec_t out;
+            #pragma unroll
+            for (int j{0}; j < VECTORIZED_LOAD_COUNT; ++j) {
+                // CALC_DTYPE >= ACT_DTYPE and bloat and half cannot be used simultaneously.
+                if constexpr (std::is_same_v<ACTIVATION_DTYPE, float>) {
+                    // Float and Float
+                    out.val[j] = dy_vec_val.val[j] * gamma_vec_val.val[j] * inv_rms - x_vec_val.val[j] * block_coeff;
+                } else if constexpr (std::is_same_v<ACTIVATION_DTYPE, half>) {
+                    if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                        out.val[j] = to_half(to_float(dy_vec_val.val[j] * gamma_vec_val.val[j]) * inv_rms - to_float(x_vec_val.val[j]) * block_coeff);
+                    } else if constexpr (std::is_same_v<CALCULATION_DTYPE, half>) {
+                        out.val[j] = dy_vec_val.val[j] * gamma_vec_val.val[j] * inv_rms - x_vec_val.val[j] * block_coeff;
+                    }
+                } else if constexpr (std::is_same_v<ACTIVATION_DTYPE, __nv_bfloat16>) {
+                    if constexpr (std::is_same_v<CALCULATION_DTYPE, float>) {
+                        out.val[j] = to_bfloat16(to_float(dy_vec_val.val[j] * gamma_vec_val.val[j]) * inv_rms - to_float(x_vec_val.val[j]) * block_coeff);
+                    } else if constexpr (std::is_same_v<CALCULATION_DTYPE, __nv_bfloat16>) {
+                        out.val[j] = dy_vec_val.val[j] * gamma_vec_val.val[j] * inv_rms - x_vec_val.val[j] * block_coeff;
+                    }
+                }
+            }
+            dx_vec[i] = out;
+        }
+    }
+
     // TODO: Write a quick kernel like the one above that launches 1 warp per 2 rows.
 
 
